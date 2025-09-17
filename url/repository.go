@@ -2,10 +2,14 @@ package url
 
 type repository struct {
 	urls map[string]*Url
+	counter map[string] int
 }
 
 func NewRepository() *repository {
-	return &repository{make(map[string]*Url)}
+	return &repository{
+		make(map[string]*Url),
+		make(map[string]int),
+	}
 }
 
 func (r *repository) Exists(id string) bool {
@@ -29,4 +33,12 @@ func (r *repository) FindByUrl(url string) *Url {
 func (r *repository) Save(url Url) error {
 	r.urls[url.Id] = &url
 	return nil
+}
+
+func (r *repository) Register(id string) {
+	r.counter[id]++
+}
+
+func (r *repository) RetrieveCounter(id string) int {
+	return r.counter[id]
 }

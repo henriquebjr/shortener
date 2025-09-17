@@ -16,12 +16,19 @@ type Repository interface {
 	Find(id string) *Url
 	FindByUrl(url string) *Url
 	Save(url Url) error
+	Register(id string)
+	RetrieveCounter(id string) int
 }
 
 type Url struct {
-	Id       string
-	Creation time.Time
-	Destiny  string
+	Id       string    `json:"id"`
+	Creation time.Time `json:"creation"`
+	Destiny  string    `json:"destiny"`
+}
+
+type Stats struct {
+	Url     *Url `json:"url"`
+	Counter int  `json:"counter"`
 }
 
 var repo Repository
@@ -66,4 +73,13 @@ func generateId() string {
 			return id
 		}
 	}
+}
+
+func Register(id string) {
+	repo.Register(id)
+}
+
+func (u *Url) Stats() *Stats {
+	counter := repo.RetrieveCounter(u.Id)
+	return &Stats{u, counter}
 }

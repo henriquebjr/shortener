@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -11,20 +12,28 @@ import (
 )
 
 var (
-	port    int
+	port    *int
+	logOn   *bool
 	baseUrl string
-	stats   chan string
 )
 
 type Headers map[string]string
 
+type Redirector struct {
+	stats chan string
+}
+
 func init() {
-	port = 8888
-	baseUrl = fmt.Sprintf("http://localhost:%d", port)
+	port = flag.Int("p,", 8888, "port")
+	logOn = flag.Bool("l", true, "log on/off")
+
+	flag.Parse()
+
+	baseUrl = fmt.Sprintf("http://localhost:%d", *port)
 }
 
 func main() {
-	stats = make(chan string)
+	stats := make(chan string)
 	defer close(stats)
 	go statsRegister(stats)
 
@@ -32,9 +41,10 @@ func main() {
 
 	http.HandleFunc("/api/shorten", Shortener)
 	http.HandleFunc("/api/stats/", Viewer)
-	http.HandleFunc("/r/", Redirector)
+	http.Handle("/r/", &Redirector{stats})
 
-	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
+	logger("Starting server in port %d...", *port)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *port), nil))
 }
 
 func Shortener(w http.ResponseWriter, r *http.Request) {
@@ -52,17 +62,19 @@ func Shortener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	shortUrl := fmt.Sprintf("%s/r/%s", baseUrl, url.Id)
+
 	var status int
 	if isNew {
 		status = http.StatusCreated
+		logger("Short URL %s succefully created to %s.", shortUrl, url.Destiny)
 	} else {
 		status = http.StatusOK
 	}
 
-	shortUrl := fmt.Sprintf("%s/r/%s", baseUrl, url.Id)
 	answerWith(w, status, Headers{
 		"Location": shortUrl,
-		"Link": fmt.Sprintf("<%s/api/stats/%s>; rel=\"stats\"", baseUrl, url.Id),
+		"Link":     fmt.Sprintf("<%s/api/stats/%s>; rel=\"stats\"", baseUrl, url.Id),
 	})
 }
 
@@ -79,24 +91,27 @@ func extractUrl(r *http.Request) string {
 	return string(url)
 }
 
-func Redirector(w http.ResponseWriter, r *http.Request) {
+func (red *Redirector) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	findUrlAndExecute(w, r, func(url *url.Url) {
+		http.Redirect(w, r, url.Destiny, http.StatusMovedPermanently)
+
+		red.stats <- url.Id
+	})
+}
+
+func findUrlAndExecute(w http.ResponseWriter, r *http.Request, executor func(*url.Url)) {
 	path := strings.Split(r.URL.Path, "/")
 	id := path[len(path)-1]
 
 	if url := url.Find(id); url != nil {
-		http.Redirect(w, r, url.Destiny, http.StatusMovedPermanently)
-
-		stats <- id
+		executor(url)
 	} else {
 		http.NotFound(w, r)
 	}
 }
 
 func Viewer(w http.ResponseWriter, r *http.Request) {
-	path := strings.Split(r.URL.Path, "/")
-	id := path[len(path)-1]
-
-	if url := url.Find(id); url != nil {
+	findUrlAndExecute(w, r, func(url *url.Url) {
 		json, err := json.Marshal(url.Stats())
 
 		if err != nil {
@@ -105,9 +120,7 @@ func Viewer(w http.ResponseWriter, r *http.Request) {
 		}
 
 		answerWithJson(w, string(json))
-	} else {
-		http.NotFound(w, r)
-	}
+	})
 }
 
 func answerWithJson(w http.ResponseWriter, answer string) {
@@ -118,6 +131,12 @@ func answerWithJson(w http.ResponseWriter, answer string) {
 func statsRegister(ids <-chan string) {
 	for id := range ids {
 		url.Register(id)
-		fmt.Printf("Redirect for %s.\n", id)
+		logger("Redirect registered to %s.", id)
+	}
+}
+
+func logger(format string, values ...interface{}) {
+	if *logOn {
+		log.Printf(fmt.Sprintf("%s\n", format), values...)
 	}
 }
